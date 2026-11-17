@@ -13,6 +13,7 @@ from xarray import DataArray, Dataset
 from .utils import Dispatcher, ngjit, calc_res, calc_bbox, orient_array, \
     dshape_from_xarray_dataset
 from .utils import get_indices, dshape_from_pandas, dshape_from_dask
+from .utils import _categorize_pandas_series, _categorize_dask_series
 from .utils import Expr # noqa (API import)
 from .resampling import resample_2d, resample_2d_distributed
 from . import reductions as rd
@@ -1359,6 +1360,22 @@ def bypixel(source, canvas, glyph, agg, *, antialias=False):
         return bypixel.pipeline(source, schema, canvas, glyph, agg, antialias=antialias)
 
 
+def _categorical_columns(agg):
+    """Return the names of columns aggregated over by ``by``/``count_cat``
+    reductions that use the default ``category_codes`` categorizer."""
+    columns = []
+
+    def recurse(a):
+        if isinstance(a, rd.summary):
+            for value in a.values:
+                recurse(value)
+        elif isinstance(a, rd.by) and isinstance(a.categorizer, rd.category_codes):
+            columns.append(a.categorizer.column)
+
+    recurse(agg)
+    return columns
+
+
 def _bypixel_sanitise(source, glyph, agg):
     # Convert 1D xarray DataArrays and DataSets into Dask DataFrames
     if isinstance(source, DataArray) and source.ndim == 1:
@@ -1393,8 +1410,21 @@ def _bypixel_sanitise(source, glyph, agg):
             if (sindex is not None and
                     getattr(source[glyph.geometry].array, "_sindex", None) is None):
                 source[glyph.geometry].array._sindex = sindex
+        if isinstance(source, pd.DataFrame):
+            for col in _categorical_columns(agg):
+                if col in source.columns:
+                    col_series = source[col]
+                    converted = _categorize_pandas_series(col_series)
+                    if converted is not col_series:
+                        source[col] = converted
         dshape = dshape_from_pandas(source)
     elif dd and isinstance(source, dd.DataFrame):
+        for col in _categorical_columns(agg):
+            if col in source.columns:
+                col_series = source[col]
+                converted = _categorize_dask_series(col_series)
+                if converted is not col_series:
+                    source[col] = converted
         dshape, source = dshape_from_dask(source)
     elif isinstance(source, Dataset):
         # Multi-dimensional Dataset

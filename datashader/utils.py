@@ -40,6 +40,16 @@ except ImportError:
     GeometryDtype = type(None)
 
 
+# Sentinel category used for missing values when aggregating by category.  It
+# is always appended last so that missing values do not get merged into a real
+# category.
+UNCLASSIFIED_CATEGORY = "unclassified"
+
+# Stable default color used by ``shade`` for the ``UNCLASSIFIED_CATEGORY``
+# bucket when no explicit color is provided.
+UNCLASSIFIED_COLOR = "gray"
+
+
 class VisibleDeprecationWarning(UserWarning):
     """Visible deprecation warning.
 
@@ -409,6 +419,51 @@ def lnglat_to_meters(longitude, latitude):
     easting = longitude * origin_shift / 180.0
     northing = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
     return (easting, northing)
+
+
+def _categorize_pandas_series(series):
+    """Return ``series`` as a pandas ``Categorical`` suitable for categorical
+    aggregation.
+
+    String columns are converted to categories sorted lexicographically.
+    When the column contains missing values a trailing
+    ``UNCLASSIFIED_CATEGORY`` is appended so that missing values are aggregated
+    into their own bucket rather than merged into a real category.
+
+    Already-categorical columns keep their existing category order and are
+    returned unchanged unless they contain missing values, in which case the
+    same trailing ``UNCLASSIFIED_CATEGORY`` is appended.
+    """
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        categories = list(series.cat.categories)
+        if not series.hasnans or categories[-1:] == [UNCLASSIFIED_CATEGORY]:
+            return series
+        return pd.Categorical(series, categories=categories + [UNCLASSIFIED_CATEGORY])
+    if pd.api.types.is_string_dtype(series.dtype):
+        categories = sorted(pd.unique(series.dropna()).tolist())
+        if series.hasnans:
+            categories = categories + [UNCLASSIFIED_CATEGORY]
+        return pd.Categorical(series, categories=categories)
+    return series
+
+
+def _categorize_dask_series(series):
+    """Dask equivalent of :func:`_categorize_pandas_series`.
+
+    The lexicographically sorted categories are computed across all partitions
+    before the column is cast to a categorical dtype, so that every partition
+    uses the same category codes.
+    """
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        return series
+    if pd.api.types.is_string_dtype(series.dtype):
+        uniques = series.dropna().drop_duplicates().compute()
+        categories = sorted(uniques.tolist())
+        has_null = series.isna().any().compute()
+        if has_null:
+            categories = categories + [UNCLASSIFIED_CATEGORY]
+        return series.astype(pd.CategoricalDtype(categories=categories))
+    return series
 
 
 # Heavily inspired by odo

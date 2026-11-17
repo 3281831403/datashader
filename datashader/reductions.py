@@ -700,7 +700,10 @@ class by(Reduction):
     ----------
     cats: str or CategoryPreprocess instance
         Name of column to aggregate over, or a categorizer object that returns categories.
-        Resulting aggregate has an outer dimension axis along the categories present.
+        If a column name is given, the column may be categorical or a string column; string
+        columns are aggregated over their lexicographically sorted unique values.
+        Resulting aggregate has an outer dimension axis along the categories present, with a
+        trailing ``"unclassified"`` category for missing values when present.
     reduction : Reduction
         Per-category reduction function.
     """
@@ -1267,9 +1270,11 @@ class count_cat(by):
     Parameters
     ----------
     column : str
-        Name of the column to aggregate over. Column data type must be
-        categorical. Resulting aggregate has a outer dimension axis along the
-        categories present.
+        Name of the column to aggregate over. Column data type may be
+        categorical or a string column; string columns are aggregated over
+        their lexicographically sorted unique values.  Resulting aggregate has
+        a outer dimension axis along the categories present, with a trailing
+        ``"unclassified"`` category for missing values when present.
     """
     def __init__(self, column):
         super().__init__(column, count())

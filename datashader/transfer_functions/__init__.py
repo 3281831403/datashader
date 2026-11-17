@@ -13,6 +13,7 @@ import xarray as xr
 
 from datashader.colors import rgb, Sets1to3
 from datashader.utils import ngjit, uint32_to_uint8, nansum_missing
+from datashader.utils import UNCLASSIFIED_CATEGORY, UNCLASSIFIED_COLOR
 
 try:
     import dask.array as da
@@ -366,7 +367,7 @@ def _colorize(agg, color_key, how, alpha, span, min_alpha, name, color_baseline,
     if not agg.ndim == 3:
         raise ValueError("agg must be 3D")
 
-    cats = agg.indexes[agg.dims[-1]]
+    cats = list(agg.indexes[agg.dims[-1]])
     if not len(cats): # No categories and therefore no data; return an empty image
         return Image(np.zeros(agg.shape[0:2], dtype=np.uint32), dims=agg.dims[:-1],
                      coords=dict([
@@ -378,11 +379,22 @@ def _colorize(agg, color_key, how, alpha, span, min_alpha, name, color_baseline,
                          "colors as there are categorical fields")
     if not isinstance(color_key, dict):
         color_key = dict(zip(cats, color_key))
-    if len(color_key) < len(cats):
-        raise ValueError(f"Insufficient colors provided ({len(color_key)}) for the categorical "
-                         f"fields available ({len(cats)})")
 
-    colors = [rgb(color_key[c]) for c in cats]
+    # Missing values are aggregated into a trailing ``UNCLASSIFIED_CATEGORY``
+    # bucket that is not a real category, so a color_key that only covers the
+    # real categories must still be accepted.
+    has_unclassified = UNCLASSIFIED_CATEGORY in cats
+    required_cats = [c for c in cats if c != UNCLASSIFIED_CATEGORY] if has_unclassified else cats
+    if len(color_key) < len(required_cats):
+        raise ValueError(f"Insufficient colors provided ({len(color_key)}) for the categorical "
+                         f"fields available ({len(required_cats)})")
+
+    def color_for(cat):
+        if cat == UNCLASSIFIED_CATEGORY:
+            return color_key.get(cat, UNCLASSIFIED_COLOR)
+        return color_key[cat]
+
+    colors = [rgb(color_for(c)) for c in cats]
     rs, gs, bs = map(xp.array, zip(*colors))
 
     # Reorient array (transposing the category dimension first)
